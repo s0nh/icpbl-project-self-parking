@@ -426,20 +426,15 @@ class PlannerSkeleton:
         tx, ty = self.waypoints[self.cur_idx]
         nx, ny = self.waypoints[self.cur_idx+1] if self.cur_idx+1 < len(self.waypoints)-1 else (tx, ty)
 
+        # 두 점의 각도 계산 
         path_yaw = math.atan2(ny - ty, nx - tx)
 
-        if orientation == "front_in":
-            target_front_x = tx - L * math.cos(path_yaw)
-            target_front_y = ty - L * math.sin(path_yaw)
-        elif orientation == "rear_in": 
-            target_front_x = tx + L * math.cos(path_yaw)
-            target_front_y = ty + L * math.sin(path_yaw)
-        else:
-            target_front_x = tx
-            target_front_y = ty
+        # 후륜 경로를 전륜 위치로 변환
+        next_front_x = tx + L * math.cos(path_yaw)
+        next_front_y = ty + L * math.sin(path_yaw)
 
-        cte = -math.sin(path_yaw) * (front_x - target_front_x) + \
-              math.cos(path_yaw) * (front_y - target_front_y)
+        cte = -math.sin(path_yaw) * (front_x - next_front_x) + \
+              math.cos(path_yaw) * (front_y - next_front_y)
 
         angle_to_path = path_yaw - yaw
         angle_to_path = (angle_to_path + math.pi) % (2 * math.pi) - math.pi
@@ -456,10 +451,21 @@ class PlannerSkeleton:
         new_steer = angle_to_path - math.atan2(k * cte, max(v, 0.5))
         new_steer = new_steer if maxSteer > abs(new_steer) else maxSteer if new_steer > 0 else -maxSteer
 
-        # 속도 제어 (간단한 P 제어기)
+        # 속도 제어 (P 제어기)
+
+        # 마지막 목표 지점 주차 방법에 따라 변겅
         final_x, final_y = self.waypoints[-1]
-        final_x_front = final_x + L * math.cos(path_yaw) / 2
-        final_y_front = final_y + L * math.sin(path_yaw) / 2
+        final_x_front = final_x
+        if final_y < self.waypoints[-2][1]: # 아래에서 위로 주차할 때
+            if orientation == "rear_in":
+                final_y_front = final_y + L
+            else:
+                final_y_front = final_y - L
+        else: # 위에서 아래로 주차할 때
+            if orientation == "rear_in":
+                final_y_front = final_y - L
+            else:
+                final_y_front = final_y + L
 
         dist_to_goal = math.hypot(final_x_front - front_x, final_y_front - front_y)
 
@@ -497,7 +503,7 @@ class PlannerSkeleton:
                 accel = 0.0
                 brake = maxBrake
 
-        if dist_to_goal < 0.5:
+        if dist_to_goal < 0.4:
             accel = 0.0
             brake = maxBrake
         
