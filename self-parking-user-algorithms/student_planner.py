@@ -172,41 +172,13 @@ class PlannerSkeleton:
         self.cur_idx = 0
         ## 충돌여부 확인 함수 구현 - 정확한 차의 너비와 길이를 모르는 상태임;;
         def check_collision(x, y, yaw, width, height):
-            
-            front_len = height * 0.75
-            rear_len = height * 0.25
-            half_width = width / 2
-
+            L = height / 1.9
+            x_center = x + (L/2) * math.cos(yaw)
+            y_center = y + (L/2) * math.sin(yaw)
             margin = 0.3
-            f = front_len + margin
-            r = rear_len + margin
-            w = half_width + margin
+            width += margin*2
+            height += margin*2
 
-            check_pnts = [
-                (f, w),
-                (f, -w),
-                (-r, w),
-                (-r, -w),
-                (f, 0),
-                (-r, 0),
-                (0, w),
-                (0, -w),
-            ]
-
-            cos_yaw = math.cos(yaw)
-            sin_yaw = math.sin(yaw)
-
-            for lx, ly in check_pnts:
-                gx = x + (lx * cos_yaw - ly * sin_yaw)
-                gy = y + (lx * sin_yaw + ly * cos_yaw)
-                col, row = round(gx/self.cell_size), round(gy/self.cell_size)
-                if not (0 <= col < len(self.base_board[0]) and 0 <= row < len(self.base_board)):
-                    return True
-                if self.base_board[row][col] == 1:
-                    return True
-                
-            return False
-            """
             safe_radius = math.hypot(width/2, height/2)
             check_pnts = [
                 (width/2, height/2),
@@ -239,7 +211,8 @@ class PlannerSkeleton:
                 else:
                     return True
             return False
-            """
+
+            
 
         ## 관측값 저장
         x = obs["state"]["x"] - self.map_extent[0] ## 0 ~ max_x로 범위 제한
@@ -328,6 +301,7 @@ class PlannerSkeleton:
                     for p in debug_map:
                         print(*p, file=f)
                 self.waypoints = path[::-1]
+                self.waypoints.append((target_x, target_y)) ## 목표지점 정확히 추가
                 break
 
             steer_inputs = [-maxSteer, -maxSteer*2/3, -maxSteer/3, 0, maxSteer/3, maxSteer*2/3, maxSteer]
@@ -358,7 +332,7 @@ class PlannerSkeleton:
                     next_y_idx = round(next_y / self.cell_size)
 
                     ## 충돌 확인
-                    if check_collision(next_x, next_y, next_yaw, L*1.4, L*1.8):
+                    if check_collision(next_x, next_y, next_yaw, L*0.75, L*1.9):
                         continue
                     
                     if self.hmap[next_y_idx][next_x_idx] == -1:
@@ -376,13 +350,6 @@ class PlannerSkeleton:
                         step_cost += abs(distance)/2 ## 핸들조작 패널티
                     if v < 0:
                         step_cost += abs(distance) ## 기어조작 패널티
-                    
-                    dist_to_obs = self.collision_map[next_y_idx][next_x_idx]
-
-                    safe_buffer = 2.5  # 안전 거리 설정
-                    if dist_to_obs < safe_buffer:
-                        penalty = (safe_buffer - dist_to_obs) * 20.0 # 벽과 가까우면 패널티 부여
-                        step_cost += penalty
 
                     new_cost = node.cost + step_cost
                     next_node = Node(next_x, next_y, next_yaw, next_x_idx, next_y_idx, next_yaw_idx, next_steer, next_v, new_cost ,node) # x, y, yaw, x_idx, y_idx, yaw_idx, steer, v, cost, parent
@@ -429,6 +396,7 @@ class PlannerSkeleton:
         x = obs["state"]["x"] - self.map_extent[0] ## 0 ~ max_x로 범위 제한
         y = self.map_extent[3] - obs["state"]["y"] ## 0 ~ max_y로 범위 제한
         yaw = -obs["state"]["yaw"] 
+        orientation = obs["state"].get("expected_orientation", None)
         target_x1, target_x2, target_y1, target_y2 = obs["target_slot"]
         target_x, target_y = (target_x1 + target_x2) / 2 - self.map_extent[0], self.map_extent[3] - (target_y1 + target_y2)/2
         dt = obs["limits"]["dt"]
@@ -443,43 +411,67 @@ class PlannerSkeleton:
         front_x = x + L * math.cos(yaw)
         front_y = y + L * math.sin(yaw)
 
+        # 가까운 경로 찾기
         min_dist = float('inf')
-        start_search = self.cur_idx
-        end_search = min(len(self.waypoints), self.cur_idx + 10)
+        start_search = min(self.cur_idx, len(self.waypoints) - 2)
+        end_search = min(len(self.waypoints), self.cur_idx + 5)
 
         for i in range(start_search, end_search):
             wx, wy = self.waypoints[i]
-            dist = math.hypot(front_x - wx, front_y - wy)
+            dist = math.hypot(x - wx, y - wy)
             if dist < min_dist:
                 min_dist = dist
                 self.cur_idx = i
 
         tx, ty = self.waypoints[self.cur_idx]
         nx, ny = self.waypoints[self.cur_idx+1] if self.cur_idx+1 < len(self.waypoints)-1 else (tx, ty)
-        k=10  # Stanley 제어기의 이득 상수
 
         path_yaw = math.atan2(ny - ty, nx - tx)
-        cte = -math.sin(path_yaw) * (front_x - tx) + math.cos(path_yaw) * (front_y - ty)
+
+        if orientation == "front_in":
+            target_front_x = tx - L * math.cos(path_yaw)
+            target_front_y = ty - L * math.sin(path_yaw)
+        elif orientation == "rear_in": 
+            target_front_x = tx + L * math.cos(path_yaw)
+            target_front_y = ty + L * math.sin(path_yaw)
+        else:
+            target_front_x = tx
+            target_front_y = ty
+
+        cte = -math.sin(path_yaw) * (front_x - target_front_x) + \
+              math.cos(path_yaw) * (front_y - target_front_y)
 
         angle_to_path = path_yaw - yaw
         angle_to_path = (angle_to_path + math.pi) % (2 * math.pi) - math.pi
-        new_steer = angle_to_path - math.atan2(k * cte, max(v, 1e-5))
+
+        # 후진 조향각 처리
+        if_reverse = False
+        if abs(angle_to_path) > math.pi / 2:
+            if_reverse = True
+            path_yaw = (path_yaw + math.pi) % (2 * math.pi) - math.pi
+            angle_to_path = path_yaw - yaw
+            angle_to_path = (angle_to_path + math.pi) % (2 * math.pi) - math.pi
+
+        k = 3.0 if not if_reverse else 1.5  # 제어 상수
+        new_steer = angle_to_path - math.atan2(k * cte, max(v, 0.5))
         new_steer = new_steer if maxSteer > abs(new_steer) else maxSteer if new_steer > 0 else -maxSteer
-        
+
         # 속도 제어 (간단한 P 제어기)
         final_x, final_y = self.waypoints[-1]
-        center_offset = L * 0.5  # 앞바퀴 중심 오프셋
-        center_x = x + center_offset * math.cos(yaw)
-        center_y = y + center_offset * math.sin(yaw)
+        final_x_front = final_x + L * math.cos(path_yaw) / 2
+        final_y_front = final_y + L * math.sin(path_yaw) / 2
 
-        dist_to_goal = math.hypot(final_x - center_x, final_y - center_y)
+        dist_to_goal = math.hypot(final_x_front - front_x, final_y_front - front_y)
 
-        if dist_to_goal > 5.0:
+        if dist_to_goal < 0.5:
+            new_steer = 0.0
+
+        if dist_to_goal > 3.0:
             target_v = 3.0
-        elif dist_to_goal > 2.0:
-            target_v = 2.0
-        elif dist_to_goal > 0.5:
-            target_v = 1.5
+        elif dist_to_goal > 1.0:
+            target_v = 1.0
+        elif dist_to_goal > 0.3:
+            target_v = 0.5
         else:
             target_v = 0.0
 
@@ -493,15 +485,19 @@ class PlannerSkeleton:
         brake = 0.0
 
         if cmd > 0:
-            accel = cmd
-            accel = min(max(accel, 0.0), maxAccel)
+            accel = min(cmd, maxAccel)
             brake = 0.0
         else:
             brake = -cmd
             accel = 0.0
-            brake = min(max(brake, 0.0), maxBrake)
+            brake = min(brake, maxBrake)
 
-        if dist_to_goal < 0.3:
+        if if_reverse:
+            if v > 0:
+                accel = 0.0
+                brake = maxBrake
+
+        if dist_to_goal < 0.5:
             accel = 0.0
             brake = maxBrake
         
@@ -509,7 +505,7 @@ class PlannerSkeleton:
             "steer": float(-new_steer),
             "accel": float(accel),
             "brake": float(brake),
-            "gear": "D"
+            "gear": "R" if if_reverse else "D"
         }
 
 
