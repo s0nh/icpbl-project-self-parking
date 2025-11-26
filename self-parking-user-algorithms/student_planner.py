@@ -176,7 +176,7 @@ class PlannerSkeleton:
         ## 관측값 저장
         x = obs["state"]["x"] - self.map_extent[0] ## 0 ~ max_x로 범위 제한
         y = self.map_extent[3] - obs["state"]["y"] ## 0 ~ max_y로 범위 제한
-        yaw = -obs["state"]["yaw"] 
+        yaw = obs["state"]["yaw"] 
         v = obs["state"]["v"]
         target_x1, target_x2, target_y1, target_y2 = obs["target_slot"]
         target_x, target_y = (target_x1 + target_x2) / 2 - self.map_extent[0], self.map_extent[3] - (target_y1 + target_y2)/2
@@ -186,13 +186,22 @@ class PlannerSkeleton:
         maxAccel = obs["limits"]["maxAccel"]
         maxBrake = obs["limits"]["maxBrake"]
         steerRate = obs["limits"]["steerRate"]
-
+        print(self.expected_orientation)
         ## 휴리스틱 계산용 hmap 생성
         target_x_idx = round(target_x / self.cell_size)
         target_y_idx = round(target_y / self.cell_size)
+        print(target_y_idx)
+        target_yaw = "up"
+        if self.expected_orientation == "front_in" :
+            if target_y_idx > len(self.base_board)/3:
+                target_yaw = "down"
+        else:
+            if target_y_idx < len(self.base_board)/3:
+                target_yaw = "down"
+        
         if self.hmap is None:
             hmap = self.collision_map
-            safe_area = round(L)
+            safe_area = round(L*3/4)
             q = deque([(target_x_idx, target_y_idx)])
             hmap[target_y_idx][target_x_idx] = 0
             while q:
@@ -243,6 +252,11 @@ class PlannerSkeleton:
             h, g, node = heapq.heappop(pq)
             # 목표 도달 체크 (거리 0.5m 이내)
             if math.hypot(node.x - target_x, node.y - target_y) < 1.0:
+                print(target_yaw)
+                if target_yaw == "up" and not math.pi*2/5 < node.yaw < math.pi*3/5:
+                    continue
+                if target_yaw == "down" and not -math.pi*3/5 < node.yaw < -math.pi*2/5:
+                    continue
                 path = []
                 curr = node
                 
@@ -262,11 +276,12 @@ class PlannerSkeleton:
                         print(*p, file=f)
                 self.waypoints = path[::-1]
                 self.waypoints.append((target_x, target_y)) ## 목표지점 정확히 추가
+                self.cur_idx = 0
                 break
 
             steer_inputs = [-maxSteer, -maxSteer/2, 0, maxSteer/2, maxSteer]
             for next_steer in steer_inputs: ## 핸들 조작 적용
-                if abs(next_steer-node.steer) > maxSteer*1.5:
+                if abs(next_steer-node.steer) > maxSteer:
                     continue
 
                 for next_v in [-1, 1]: ## 가감속 적용
@@ -304,7 +319,7 @@ class PlannerSkeleton:
                     step_cost = abs(distance)
                     
                     if abs(next_steer - node.steer) > 0.001:
-                        step_cost += abs(distance)/2 ## 핸들조작 패널티
+                        step_cost += abs(distance) ## 핸들조작 패널티
                     if v * next_v < 0:
                         step_cost += abs(distance) ## 기어조작 패널티
 
