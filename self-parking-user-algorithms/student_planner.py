@@ -62,9 +62,10 @@ class PlannerSkeleton:
         self.waypoints.clear()
         self.hmap = None
         self.collision_map = None
+        self.expected_orientation = map_payload["expected_orientation"]
 
         self.base_board = [[0.0]*len(self.parked_grid[0]) for _ in range(len(self.parked_grid))]
-        self.collision_map = [[999.0]*len(self.parked_grid[0]) for _ in range(len(self.parked_grid))]
+        self.collision_map = [[999]*len(self.parked_grid[0]) for _ in range(len(self.parked_grid))]
         q = deque()
 
         def transform_idx(x_min, x_max, y_min, y_max):
@@ -87,7 +88,7 @@ class PlannerSkeleton:
                         if i < 0 or j >= len(self.base_board[0]):
                             continue
                         self.base_board[i][j] = 1.0
-                        self.collision_map[i][j] = 1.0
+                        self.collision_map[i][j] = -1.0
                         q.append((j, i)) ## 장애물 좌표 (x, y)
         
         ## walls
@@ -98,7 +99,7 @@ class PlannerSkeleton:
                     if i < 0 or j >= len(self.base_board[0]):
                         continue
                     self.base_board[i][j] = 1.0
-                    self.collision_map[i][j] = 1.0
+                    self.collision_map[i][j] = -1.0
                     q.append((j, i)) ## 장애물 좌표 (x, y)
         
         ## lines
@@ -109,7 +110,7 @@ class PlannerSkeleton:
                     if i < 0 or j >= len(self.base_board[0]):
                         continue
                     self.base_board[i][j] = 1.0
-                    self.collision_map[i][j] = 1.0
+                    self.collision_map[i][j] = -1.0
                     q.append((j, i)) ## 장애물 좌표 (x, y)
         
         ## 최종 base_board 확인용
@@ -124,8 +125,8 @@ class PlannerSkeleton:
             for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
                 nx, ny = cx + dx, cy + dy
                 if 0 <= nx < len(self.base_board[0]) and 0 <= ny < len(self.base_board):
-                    if self.collision_map[ny][nx] > current_dist + self.cell_size:
-                        self.collision_map[ny][nx] = current_dist + self.cell_size
+                    if self.collision_map[ny][nx] > 0:
+                        self.collision_map[ny][nx] = current_dist - self.cell_size
                         q.append((nx, ny))
 
 
@@ -156,8 +157,9 @@ class PlannerSkeleton:
 
 
 
-
-
+        '''
+        collision_map 선언 이후에 그 위에 hmap 덧씌우기
+        '''
 
 
 
@@ -169,49 +171,6 @@ class PlannerSkeleton:
 
         # TODO: A*, RRT*, Hybrid A* 등으로 self.waypoints를 채우세요.
         self.waypoints.clear()
-        self.cur_idx = 0
-        ## 충돌여부 확인 함수 구현 - 정확한 차의 너비와 길이를 모르는 상태임;;
-        def check_collision(x, y, yaw, width, height):
-            L = height / 1.9
-            x_center = x + (L/2) * math.cos(yaw)
-            y_center = y + (L/2) * math.sin(yaw)
-            margin = 0.3
-            width += margin*2
-            height += margin*2
-
-            safe_radius = math.hypot(width/2, height/2)
-            check_pnts = [
-                (width/2, height/2),
-                (width/2, -height/2),
-                (-width/2, height/2),
-                (-width/2, -height/2),
-                # (width/2, height/4),
-                # (width/2, -height/4),
-                # (-width/2, height/4),
-                # (-width/2, -height/4),
-                (width/2, 0),
-                (-width/2, 0),
-                (0, height/2),
-                (0, -height/2),
-            ]
-            x_idx, y_idx = round(x / self.cell_size), round(y / self.cell_size)
-            if not (0 <= x_idx < len(self.base_board[0]) and 0 <= y_idx < len(self.base_board)):
-                return True
-            if self.collision_map[y_idx][x_idx] > safe_radius:
-                return False
-            cos_yaw = math.cos(yaw)
-            sin_yaw = math.sin(yaw)
-            for lx, ly in check_pnts:
-                gx = x + (lx * cos_yaw - ly * sin_yaw)
-                gy = y + (lx * sin_yaw + ly * cos_yaw)
-                col, row = round(gx/self.cell_size), round(gy/self.cell_size)
-                if 0 <= col < len(self.base_board[0]) and 0 <= row < len(self.base_board):
-                    if self.base_board[row][col] == 1:
-                        return True
-                else:
-                    return True
-            return False
-
             
 
         ## 관측값 저장
@@ -227,19 +186,20 @@ class PlannerSkeleton:
         maxAccel = obs["limits"]["maxAccel"]
         maxBrake = obs["limits"]["maxBrake"]
         steerRate = obs["limits"]["steerRate"]
-        
+
         ## 휴리스틱 계산용 hmap 생성
         target_x_idx = round(target_x / self.cell_size)
         target_y_idx = round(target_y / self.cell_size)
         if self.hmap is None:
-            hmap = [[-1]*len(self.base_board[0]) for _ in range(len(self.base_board))]
+            hmap = self.collision_map
+            safe_area = round(L)
             q = deque([(target_x_idx, target_y_idx)])
             hmap[target_y_idx][target_x_idx] = 0
             while q:
                 current_x, current_y = q.popleft()
                 for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                     if 0 <= current_x+dx < len(self.base_board[1]) and 0 <= current_y+dy < len(self.base_board):
-                        if self.base_board[current_y+dy][current_x+dx] == 0 and hmap[current_y+dy][current_x+dx] == -1:
+                        if hmap[current_y+dy][current_x+dx] < -safe_area:
                             hmap[current_y+dy][current_x+dx] = hmap[current_y][current_x]+self.cell_size
                             q.append((current_x+dx, current_y+dy))
             self.hmap = hmap
@@ -304,14 +264,14 @@ class PlannerSkeleton:
                 self.waypoints.append((target_x, target_y)) ## 목표지점 정확히 추가
                 break
 
-            steer_inputs = [-maxSteer, -maxSteer*2/3, -maxSteer/3, 0, maxSteer/3, maxSteer*2/3, maxSteer]
+            steer_inputs = [-maxSteer, -maxSteer/2, 0, maxSteer/2, maxSteer]
             for next_steer in steer_inputs: ## 핸들 조작 적용
                 if abs(next_steer-node.steer) > maxSteer*1.5:
                     continue
 
                 for next_v in [-1, 1]: ## 가감속 적용
                     
-                    distance = next_v
+                    distance = next_v * self.cell_size * 1.5
                     
                     ## 가능한 물리 엔진 적용
                     if abs(next_steer) < 0.001: ## 직진
@@ -331,11 +291,8 @@ class PlannerSkeleton:
                     next_x_idx = round(next_x / self.cell_size)
                     next_y_idx = round(next_y / self.cell_size)
 
-                    ## 충돌 확인
-                    if check_collision(next_x, next_y, next_yaw, L*0.75, L*1.9):
-                        continue
                     
-                    if self.hmap[next_y_idx][next_x_idx] == -1:
+                    if self.hmap[next_y_idx][next_x_idx] < 0:
                         continue
                     
                     ## 이미 지나간 경로인지 확인
@@ -348,7 +305,7 @@ class PlannerSkeleton:
                     
                     if abs(next_steer - node.steer) > 0.001:
                         step_cost += abs(distance)/2 ## 핸들조작 패널티
-                    if v < 0:
+                    if v * next_v < 0:
                         step_cost += abs(distance) ## 기어조작 패널티
 
                     new_cost = node.cost + step_cost
