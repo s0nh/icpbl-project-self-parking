@@ -36,8 +36,8 @@ class PlannerSkeleton:
     stationary_grid: Optional[List[List[float]]] = None
     waypoints: List[Tuple[float, float]] = None
     base_board = None
-    hmap = None
     collision_map = None
+    cur_idx = 0
 
     def __post_init__(self) -> None:
         if self.waypoints is None:
@@ -61,9 +61,10 @@ class PlannerSkeleton:
         self.waypoints.clear()
         self.hmap = None
         self.collision_map = None
+        self.expected_orientation = map_payload["expected_orientation"]
 
         self.base_board = [[0.0]*len(self.parked_grid[0]) for _ in range(len(self.parked_grid))]
-        self.collision_map = [[999.0]*len(self.parked_grid[0]) for _ in range(len(self.parked_grid))]
+        self.collision_map = [[0.0]*len(self.parked_grid[0]) for _ in range(len(self.parked_grid))]
         q = deque()
 
         def transform_idx(x_min, x_max, y_min, y_max):
@@ -112,9 +113,9 @@ class PlannerSkeleton:
                     q.append((j, i)) ## 장애물 좌표 (x, y)
         
         ## 최종 base_board 확인용
-        with open("total_map.txt", "w", encoding="utf-8") as f:
-            for p in self.base_board:
-                print(*list(map(int, p)), file=f)
+        # with open("total_map.txt", "w", encoding="utf-8") as f:
+        #     for p in self.base_board:
+        #         print(*list(map(int, p)), file=f)
 
         while q:
             cx, cy = q.popleft()
@@ -123,19 +124,16 @@ class PlannerSkeleton:
             for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
                 nx, ny = cx + dx, cy + dy
                 if 0 <= nx < len(self.base_board[0]) and 0 <= ny < len(self.base_board):
-                    if self.collision_map[ny][nx] > current_dist + self.cell_size:
-                        self.collision_map[ny][nx] = current_dist + self.cell_size
+                    if self.collision_map[ny][nx] == 0:
+                        self.collision_map[ny][nx] = current_dist + 1
+                        if self.collision_map[ny][nx] == 5:
+                            continue
                         q.append((nx, ny))
 
 
-        with open("collision_map.txt", "w", encoding="utf-8") as f:
-            for p in self.collision_map:
-                print(*list(map(int, p)), file=f)
-
-
-
-
-
+        # with open("collision_map.txt", "w", encoding="utf-8") as f:
+        #     for p in self.collision_map:
+        #         print(*list(map(int, p)), file=f)
 
 
 
@@ -168,78 +166,83 @@ class PlannerSkeleton:
 
         # TODO: A*, RRT*, Hybrid A* 등으로 self.waypoints를 채우세요.
         self.waypoints.clear()
-        ## 충돌여부 확인 함수 구현 - 정확한 차의 너비와 길이를 모르는 상태임;;
-        def check_collision(x, y, yaw, width, height):
-            safe_radius = math.hypot(width/2, height/2)
-            check_pnts = [
-                (width/2, height/2),
-                (width/2, -height/2),
-                (-width/2, height/2),
-                (-width/2, -height/2),
-                # (width/2, height/4),
-                # (width/2, -height/4),
-                # (-width/2, height/4),
-                # (-width/2, -height/4),
-                (width/2, 0),
-                (-width/2, 0),
-                (0, height/2),
-                (0, -height/2),
-            ]
-            x_idx, y_idx = round(x / self.cell_size), round(y / self.cell_size)
-            if not (0 <= x_idx < len(self.base_board[0]) and 0 <= y_idx < len(self.base_board)):
-                return True
-            if self.collision_map[y_idx][x_idx] > safe_radius:
-                return False
-            cos_yaw = math.cos(yaw)
-            sin_yaw = math.sin(yaw)
-            for lx, ly in check_pnts:
-                gx = x + (lx * cos_yaw - ly * sin_yaw)
-                gy = y + (lx * sin_yaw + ly * cos_yaw)
-                col, row = round(gx/self.cell_size), round(gy/self.cell_size)
-                if 0 <= col < len(self.base_board[0]) and 0 <= row < len(self.base_board):
-                    if self.base_board[row][col] == 1:
-                        return True
-                else:
-                    return True
-            return False
-
+            
+        def to_idx(x, y):
+            return round((x - self.map_extent[0])/self.cell_size), round((self.map_extent[3] - y)/self.cell_size)
+        
         ## 관측값 저장
-        x = obs["state"]["x"] - self.map_extent[0] ## 0 ~ max_x로 범위 제한
-        y = self.map_extent[3] - obs["state"]["y"] ## 0 ~ max_y로 범위 제한
-        yaw = obs["state"]["yaw"] 
+        x = obs["state"]["x"]
+        y = obs["state"]["y"]
+        yaw = obs["state"]["yaw"]
         v = obs["state"]["v"]
-        target_x1, target_x2, target_y1, target_y2 = obs["target_slot"]
-        target_x, target_y = (target_x1 + target_x2) / 2 - self.map_extent[0], self.map_extent[3] - (target_y1 + target_y2)/2
+        x1, x2, y1, y2 = obs["target_slot"]
         dt = obs["limits"]["dt"]
         L = obs["limits"]["L"]
         maxSteer = obs["limits"]["maxSteer"]
         maxAccel = obs["limits"]["maxAccel"]
         maxBrake = obs["limits"]["maxBrake"]
         steerRate = obs["limits"]["steerRate"]
+
+        target_yaw_dir = "up"
+        target_middle_x_idx, target_middle_y_idx = to_idx((x1+x2)/2, (y1+y2)/2)
+        if self.expected_orientation == "front_in" :
+            if target_middle_y_idx > len(self.base_board)/3:
+                target_yaw_dir = "down"
+        else:
+            if target_middle_y_idx < len(self.base_board)/3:
+                target_yaw_dir = "down"
         
-        ## 휴리스틱 계산용 hmap 생성
-        target_x_idx = round(target_x / self.cell_size)
-        target_y_idx = round(target_y / self.cell_size)
-        if self.hmap is None:
-            hmap = [[-1]*len(self.base_board[0]) for _ in range(len(self.base_board))]
-            q = deque([(target_x_idx, target_y_idx)])
-            hmap[target_y_idx][target_x_idx] = 0
-            while q:
-                current_x, current_y = q.popleft()
-                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                    if 0 <= current_x+dx < len(self.base_board[1]) and 0 <= current_y+dy < len(self.base_board):
-                        if self.base_board[current_y+dy][current_x+dx] == 0 and hmap[current_y+dy][current_x+dx] == -1:
-                            hmap[current_y+dy][current_x+dx] = hmap[current_y][current_x]+self.cell_size
-                            q.append((current_x+dx, current_y+dy))
-            self.hmap = hmap
-            with open("hmap.txt", "w", encoding="utf-8") as f:
-                for p in self.hmap:
-                    print(*p, sep='\t', file=f)
-        
-        ## 실세계 물리연산 실행할 최소 단위 Node 설정
+        target_x = (x1 + x2) / 2
+        target_y = -1
+        if target_yaw_dir == "up":
+            target_y = (y1 + y2) / 2 - L/6
+        else:
+            target_y = (y1 + y2) / 2 + L/6
+
+        target_hmap = [[-1] * len(self.base_board[0]) for _ in range(len(self.base_board))] ## target_pnt 로부터의 BFS 거리
+        target_x_idx, target_y_idx = to_idx(target_x, target_y)
+        self.collision_map[target_y_idx-1][target_x_idx] = 0
+        self.collision_map[target_y_idx+1][target_x_idx] = 0
+        target_hmap[target_y_idx][target_x_idx] = 0
+        q = deque([(target_x_idx, target_y_idx)])
+        while q:
+            cx, cy = q.popleft()
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx, ny = cx + dx, cy + dy
+                if 0 <= nx < len(self.base_board[0]) and 0 <= ny < len(self.base_board):
+                    if target_hmap[ny][nx] == -1 and self.collision_map[ny][nx] == 0:
+                        target_hmap[ny][nx] = target_hmap[cy][cx] + self.cell_size
+                        q.append((nx, ny))
+
+        ##-------------------------DEBUG---------------------------
+        # with open("target_hmap.txt", "w", encoding="utf-8") as f:
+        #     for p in target_hmap:
+        #         print(*p, sep='\t', file=f)
+        ##---------------------------------------------------------
+
+        start_hmap = [[-1] * len(self.base_board[0]) for _ in range(len(self.base_board))] ## start_pnt 로부터의 BFS 거리
+        start_x, start_y = x, y
+        start_x_idx, start_y_idx = to_idx(x, y)
+        start_hmap[start_y_idx][start_x_idx] = 0
+        q = deque([(start_x_idx, start_y_idx)])
+        while q:
+            cx, cy = q.popleft()
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx, ny = cx + dx, cy + dy
+                if 0 <= nx < len(self.base_board[0]) and 0 <= ny < len(self.base_board):
+                    if start_hmap[ny][nx] == -1 and self.collision_map[ny][nx] == 0:
+                        start_hmap[ny][nx] = start_hmap[cy][cx] + self.cell_size
+                        q.append((nx, ny))
+
+        ##-------------------------DEBUG---------------------------
+        # with open("start_hmap.txt", "w", encoding="utf-8") as f:
+        #     for p in start_hmap:
+        #         print(*p, sep='\t', file=f)
+        ##---------------------------------------------------------
+
         class Node:
-            __slots__ = ("x", "y", "yaw", "x_idx", "y_idx", "yaw_idx", "steer", "v", "cost", "parent")
-            def __init__(self, x, y, yaw, x_idx, y_idx, yaw_idx, steer, v, cost, parent):
+            __slots__ = ("x", "y", "yaw", "x_idx", "y_idx", "yaw_idx", "steer", "direction", "cost", "kind", "parent")
+            def __init__(self, x, y, yaw, x_idx, y_idx, yaw_idx, steer, direction, cost, kind, parent):
                 self.x = x
                 self.y = y
                 self.yaw = yaw
@@ -247,103 +250,110 @@ class PlannerSkeleton:
                 self.y_idx = y_idx
                 self.yaw_idx = yaw_idx
                 self.steer = steer
-                self.v = v
+                self.direction = direction
                 self.cost = cost
+                self.kind = kind ## 시작점부터 시작한 노드 or 목적지부터 시작한 노드
                 self.parent = parent
-            
+
             def __lt__(self, other):
                 return self.cost < other.cost
+
+        start_yaw_idx = round(yaw / 0.26)
+        start_node = Node(start_x, start_y, yaw, start_x_idx, start_y_idx, start_yaw_idx, 0.0, 1, 0.0, "start", None)
+
+        target_yaw = yaw if target_yaw_dir == "up" else -yaw
+        target_yaw_idx = round(yaw / 0.26)
+        target_node = Node(target_x, target_y, target_yaw, target_x_idx, target_y_idx, target_yaw_idx, 0.0, 1, 0.0, "target", None)
+        if self.expected_orientation == "front_in":
+            target_node.direction = -1
+        pq = [(target_hmap[start_y_idx][start_x_idx], start_node), (start_hmap[target_y_idx][target_x_idx], target_node)]
         
+        visited = {}
+        visited[(start_x_idx, start_y_idx, start_yaw_idx)] = start_node
+        visited[(target_x_idx, target_y_idx, target_yaw_idx)] = target_node
 
-        ## 연속형 좌표 -> 이산형 좌표 변환
-        x_idx = round(x / self.cell_size)
-        y_idx = round(y / self.cell_size)
-        yaw_idx = round(yaw / 0.26) ## 15도로 나눠서 전방향 24개로 구분
-
-        ## hybrid A* 구현
-        start_node = Node(x, y, yaw, x_idx, y_idx, yaw_idx, 0.0, v, 0, None)
-
-        pq = [(self.hmap[y_idx][x_idx], 0, start_node)]
-
-        visited = set()
-        visited.add((x_idx, y_idx, yaw_idx))
-        
         while pq:
-            h, g, node = heapq.heappop(pq)
-            # 목표 도달 체크 (거리 0.5m 이내)
-            if math.hypot(node.x - target_x, node.y - target_y) < 1.0:
-                path = []
-                curr = node
-                
-                ## ============================ 디버깅용
-                print("found")
-                debug_map = []
-                for p in self.base_board:
-                    debug_map.append(p.copy())
-                ## ============================ 디버깅용
-                # 부모 노드를 따라 시작점까지 거슬러 올라감
-                while curr is not None:
-                    debug_map[curr.y_idx][curr.x_idx] = 1.0
-                    path.append((curr.x, curr.y))
-                    curr = curr.parent
-                with open("debug.txt", "w", encoding="utf-8") as f:
-                    for p in debug_map:
-                        print(*p, file=f)
-                self.waypoints = path[::-1]
-                break
+            f, node = heapq.heappop(pq)
+            steer_inputs = [-maxSteer, -maxSteer/2, 0, maxSteer/2, maxSteer]
+            for next_steer in steer_inputs:
+                if abs(next_steer-node.steer) > maxSteer:
+                    continue
+                next_direction = node.direction
+                distance = next_direction * self.cell_size * 1.5
 
-            steer_inputs = [-maxSteer, -maxSteer*2/3, -maxSteer/3, 0, maxSteer/3, maxSteer*2/3, maxSteer]
-            for next_steer in steer_inputs: ## 핸들 조작 적용
-                if abs(next_steer-node.steer) > maxSteer*1.5:
+                if abs(next_steer) < 0.001: ## 직진
+                    next_yaw = node.yaw
+                    next_x = node.x + distance * math.cos(node.yaw)
+                    next_y = node.y + distance * math.sin(node.yaw)
+                else: ## 회전
+                    beta = (distance / L) * math.tan(next_steer)
+                    R = L / math.tan(next_steer)
+                    next_yaw = node.yaw + beta
+                    next_x = node.x + R * (math.sin(next_yaw) - math.sin(node.yaw))
+                    next_y = node.y - R * (math.cos(next_yaw) - math.cos(node.yaw))
+                    # 각도 정규화 (-pi ~ pi)
+                    next_yaw = (next_yaw + math.pi) % (2 * math.pi) - math.pi
+
+                next_yaw_idx = round(next_yaw/0.26)
+                next_x_idx, next_y_idx = to_idx(next_x, next_y)
+                if not (0 <= next_x_idx < len(self.base_board[0]) and 0 <= next_y_idx < len(self.base_board)):
                     continue
 
-                for next_v in [-1, 1]: ## 가감속 적용
-                    
-                    distance = next_v
-                    
-                    ## 가능한 물리 엔진 적용
-                    if abs(next_steer) < 0.001: ## 직진
-                        next_yaw = node.yaw
-                        next_x = node.x + distance * math.cos(node.yaw)
-                        next_y = node.y + distance * math.sin(node.yaw)
-                    else: ## 회전
-                        beta = (distance / L) * math.tan(next_steer)
-                        R = L / math.tan(next_steer)
-                        next_yaw = node.yaw + beta
-                        next_x = node.x + R * (math.sin(next_yaw) - math.sin(node.yaw))
-                        next_y = node.y - R * (math.cos(next_yaw) - math.cos(node.yaw))
-                        # 각도 정규화 (-pi ~ pi)
-                        next_yaw = (next_yaw + math.pi) % (2 * math.pi) - math.pi
-                    
-                    next_yaw_idx = round(next_yaw/0.26)
-                    next_x_idx = round(next_x / self.cell_size)
-                    next_y_idx = round(next_y / self.cell_size)
+                ## 이미 지나간 경로인지 확인
+                if (next_x_idx, next_y_idx, next_yaw_idx) in visited:
+                    ## 시작점에서 시작한 노드와 목적지에서 시작한 노드가 만나면 종료
+                    if visited[(next_x_idx, next_y_idx, next_yaw_idx)].kind != node.kind:
+                        first_node, final_node = visited[(next_x_idx, next_y_idx, next_yaw_idx)], node
+                        if node.kind == "start":
+                            first_node, final_node = node, visited[(next_x_idx, next_y_idx, next_yaw_idx)]
+                        path = []
+                        while first_node:
+                            path.append((first_node.x, first_node.y))
+                            first_node = first_node.parent
+                        path = path[::-1]
+                        while final_node:
+                            path.append((final_node.x, final_node.y))
+                            final_node = final_node.parent
+                        self.waypoints = path
 
-                    ## 충돌 확인
-                    if check_collision(next_x, next_y, next_yaw, L*1.4, L*1.8):
-                        continue
-                    
-                    if self.hmap[next_y_idx][next_x_idx] == -1:
-                        continue
-                    
-                    ## 이미 지나간 경로인지 확인
-                    if (next_x_idx, next_y_idx, next_yaw_idx) in visited:
-                        continue
-                    visited.add((next_x_idx, next_y_idx, next_yaw_idx))
+                        ##-------------------------DEBUG---------------------------
+                        # debug_map = []
+                        # for p in self.base_board:
+                        #     debug_map.append(p[:])
+                        print(path)
+                        # for x, y in path:
+                        #     x_idx, y_idx = to_idx(x, y)
+                        #     if 0 <= x_idx < len(self.base_board[0]) and 0 <= y_idx < len(self.base_board):
+                        #         debug_map[y_idx][x_idx] = 1
+                        # with open("final_path.txt", "w", encoding="utf-8") as f:
+                        #     for p in debug_map:
+                        #         print(*p, sep='\t', file=f)
+                        ##---------------------------------------------------------
+                        return
+                    continue
 
-                    new_h = self.hmap[next_y_idx][next_x_idx]
-                    step_cost = abs(distance)
-                    
-                    if abs(next_steer - node.steer) > 0.001:
-                        step_cost += abs(distance)/2 ## 핸들조작 패널티
-                    if v < 0:
-                        step_cost += abs(distance) ## 기어조작 패널티
+                new_h = 999
+                if node.kind == "start":
+                    if target_hmap[next_y_idx][next_x_idx] < 0:
+                        continue
+                    new_h = target_hmap[next_y_idx][next_x_idx]
+                else:
+                    if start_hmap[next_y_idx][next_x_idx] < 0:
+                        continue
+                    new_h = start_hmap[next_y_idx][next_x_idx]
+                
 
-                    new_cost = node.cost + step_cost
-                    next_node = Node(next_x, next_y, next_yaw, next_x_idx, next_y_idx, next_yaw_idx, next_steer, next_v, new_cost ,node) # x, y, yaw, x_idx, y_idx, yaw_idx, steer, v, cost, parent
-                    
-                    heapq.heappush(pq, (new_h+new_cost, new_cost, next_node))
-        
+                step_cost = abs(distance)
+                
+                if abs(next_steer - node.steer) > 0.001:
+                    step_cost += abs(distance)*2 ## 핸들조작 패널티
+
+                new_cost = node.cost + step_cost
+                next_node = Node(next_x, next_y, next_yaw, next_x_idx, next_y_idx, next_yaw_idx, next_steer, next_direction, new_cost, node.kind, node)
+
+                visited[(next_x_idx, next_y_idx, next_yaw_idx)] = next_node
+
+                heapq.heappush(pq, (new_h+new_cost, next_node))
     
 ## =========================================================================================================================================================================
 
@@ -378,8 +388,148 @@ class PlannerSkeleton:
             self.compute_path(obs)
             if not self.waypoints:
                 return {"steer": 0.0, "accel": 0.0, "brake": 1.0, "gear": "D"}
-        return {"steer": 0.0, "accel": 0.0, "brake": 1.0, "gear": "D"}
+
+        # OBS 불러오기
+        v = float(obs.get("state", {}).get("v", 0.0))
+        x = obs["state"]["x"] - self.map_extent[0] ## 0 ~ max_x로 범위 제한
+        y = self.map_extent[3] - obs["state"]["y"] ## 0 ~ max_y로 범위 제한
+        yaw = -obs["state"]["yaw"] 
+        orientation = obs["state"].get("expected_orientation", None)
+        target_x1, target_x2, target_y1, target_y2 = obs["target_slot"]
+        target_x, target_y = (target_x1 + target_x2) / 2 - self.map_extent[0], self.map_extent[3] - (target_y1 + target_y2)/2
+        dt = obs["limits"]["dt"]
+        L = obs["limits"]["L"]
+        maxSteer = obs["limits"]["maxSteer"]
+        maxAccel = obs["limits"]["maxAccel"]
+        maxBrake = obs["limits"]["maxBrake"]
+        steerRate = obs["limits"]["steerRate"]
+
+        # 조향각 구하기 Stanley 알고리즘 사용
+
+        front_x = x + L * math.cos(yaw)
+        front_y = y + L * math.sin(yaw)
+
+        # 가까운 경로 찾기
+        min_dist = float('inf')
+        start_search = self.cur_idx
+        end_search = min(len(self.waypoints), self.cur_idx + 10)
+
+        for i in range(start_search, end_search):
+            wx, wy = self.waypoints[i]
+            dist = math.hypot(x - wx, y - wy)
+            if dist < min_dist:
+                min_dist = dist
+                self.cur_idx = i
+
+        tx, ty = self.waypoints[self.cur_idx]
+
+        if self.cur_idx + 1 < len(self.waypoints):
+            nx, ny = self.waypoints[self.cur_idx + 1]
+            path_yaw = math.atan2(ny - ty, nx - tx)
+        else:
+            nx, ny = tx, ty
+            if self.cur_idx - 1 >= 0:
+                px, py = self.waypoints[self.cur_idx - 1]
+                path_yaw = math.atan2(ty - py, tx - px)
+            else:
+                path_yaw = yaw
+
+        angle_to_path = path_yaw - yaw
+        angle_to_path = (angle_to_path + math.pi) % (2 * math.pi) - math.pi
+
+        # 후진 조향각 처리
+        if_reverse = False
+        if abs(angle_to_path) > math.pi / 2:
+            if_reverse = True
+            path_yaw = (path_yaw + math.pi) % (2 * math.pi) - math.pi
+
+        # 후륜 경로를 전륜 위치로 변환
+        next_front_x = tx + L * math.cos(path_yaw)
+        next_front_y = ty + L * math.sin(path_yaw)
+
+        cte = -math.sin(path_yaw) * (front_x - next_front_x) + \
+              math.cos(path_yaw) * (front_y - next_front_y)
+
+        angle_to_path = path_yaw - yaw
+        angle_to_path = (angle_to_path + math.pi) % (2 * math.pi) - math.pi
+
+        k = 3.0 if not if_reverse else 1.0  # 제어 상수
+        new_steer = angle_to_path - math.atan2(k * cte, max(v, 0.5))
+        new_steer = new_steer if maxSteer > abs(new_steer) else maxSteer if new_steer > 0 else -maxSteer
+
+        # 속도 제어 (P 제어기)
+        # 마지막 목표 지점 주차 방법에 따라 변겅
+        final_x, final_y = self.waypoints[-1]
+        final_y_idx = round(final_y / self.cell_size)
+        final_x_front = final_x
+        if final_y_idx > len(self.base_board)/3: # 아래에서 위로 주차할 때
+            if orientation == "rear_in":
+                final_y_front = final_y - L
+            else:
+                final_y_front = final_y + L
+        else: # 위에서 아래로 주차할 때
+            if orientation == "rear_in":
+                final_y_front = final_y + L
+            else:
+                final_y_front = final_y - L
+
+        dist_to_goal = math.hypot(final_x_front - front_x, final_y_front - front_y)
+
+        if dist_to_goal < 0.5*self.cell_size:
+            new_steer = 0.0
+
+        if dist_to_goal > 10.0*self.cell_size:
+            target_v = 8.0*self.cell_size
+        elif dist_to_goal > 8.0*self.cell_size:
+            target_v = 5.0*self.cell_size
+        elif dist_to_goal > 5.0*self.cell_size:
+            target_v = 3.0*self.cell_size
+        elif dist_to_goal > 2.0*self.cell_size:
+            target_v = 1.0*self.cell_size
+        else:
+            target_v = 0.0
+
+        current_v = v
+        speed_error = target_v - abs(current_v)
+
+        Kp = 1.0  # 튜닝 상수
+        cmd = Kp * speed_error
+
+        accel = 0.0
+        brake = 0.0
+
+        if cmd > 0:
+            accel = min(cmd, maxAccel)
+            brake = 0.0
+        else:
+            brake = -cmd
+            accel = 0.0
+            brake = min(brake, maxBrake)
+
+        if if_reverse:
+            if v > 0:
+                accel = 0.0
+                brake = maxBrake
+
+        if dist_to_goal < 0.01*self.cell_size:
+            accel = 0.0
+            brake = maxBrake
+
+        print(f"cellsize: {self.cell_size}, dist_to_goal: {dist_to_goal:.2f}, target_v: {target_v:.2f}, steer: {new_steer:.2f}, accel: {accel:.2f}, brake: {brake:.2f}, next_point: {tx}, {ty} , target_point: {final_x_front}, {final_y_front}")
+        
+        return {
+            "steer": float(-new_steer),
+            "accel": float(accel),
+            "brake": float(brake),
+            "gear": "R" if if_reverse else "D"
+        }
+
+
+
+
         # 예시: 기본 데모 제어. 학생은 원하는 알고리즘으로 대체하면 됩니다.
+
+        """
         t = float(obs.get("t", 0.0))
         v = float(obs.get("state", {}).get("v", 0.0))
         x = obs["state"]["x"] - self.map_extent[0] ## 0 ~ max_x로 범위 제한
@@ -460,7 +610,7 @@ class PlannerSkeleton:
             "accel": float(accel_cmd), 
             "brake": float(brake_cmd), 
             "gear": gear
-        }
+        }"""
 
 
 

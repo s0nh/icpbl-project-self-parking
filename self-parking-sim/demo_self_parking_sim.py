@@ -2014,7 +2014,7 @@ def reseed_map_states(map_states: dict, maps_cfg):
 class IPCController:
     """Single-client TCP server that hosts JSONL IPC for the student algorithm."""
 
-    def __init__(self, host="127.0.0.1", port=55556, timeout=0.15):
+    def __init__(self, host="127.0.0.1", port=55556, timeout=10):
         self.host = host
         self.port = port
         self.timeout = timeout
