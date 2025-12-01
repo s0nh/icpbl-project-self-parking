@@ -39,6 +39,7 @@ class PlannerSkeleton:
     collision_map = None
     cur_idx = 0
     target_yaw_dir = "up"
+    is_reverse = False
 
     def __post_init__(self) -> None:
         if self.waypoints is None:
@@ -316,7 +317,10 @@ class PlannerSkeleton:
                             path.append((final_node.x, final_node.y))
                             final_node = final_node.parent
                         self.waypoints = path
+                        
+                        # control 함수 돌리기 전 전처리
                         self.cur_idx = 0
+                        self.is_reverse = False
 
                         ##-------------------------DEBUG---------------------------
                         debug_map = []
@@ -408,7 +412,7 @@ class PlannerSkeleton:
 
         # 조향각 구하기 Stanley 알고리즘 사용
 
-        target_x, target_y = self.waypoints[-1] # 중앙 후륜 지점.
+        target_x, target_y = self.waypoints[-1] # 후륜 지점.
         
         # 목표지점 전륜 좌표.
         target_x_front = target_x
@@ -421,39 +425,27 @@ class PlannerSkeleton:
         front_x = x + L * math.cos(yaw)
         front_y = y + L * math.sin(yaw)
 
-        # 전진, 후진 감지 코드
-        temp_idx = min(self.cur_idx, len(self.waypoints)-2)
-        cx, cy = self.waypoints[temp_idx]
-        nx, ny = self.waypoints[temp_idx + 1]
-        preview_path_yaw = math.atan2(ny - cy, nx - cx)
-
-        diff = preview_path_yaw - yaw
-        diff = (diff + math.pi) % (2 * math.pi) - math.pi
-
-        is_reversing_search = abs(diff) > math.pi / 2
-
-        if is_reversing_search:
-            search_x, search_y = x, y
-        else:
-            search_x, search_y = front_x, front_y
-
+        search_x, search_y = x, y
+        if not self.is_reverse:
+            search_x = x + L * math.cos(yaw)
+            search_y = y + L * math.sin(yaw)
+            
         # 기어번경 지점 탐색
         switch_idx = -1
         dist_to_switch = float('inf')
         search_limit = min(self.cur_idx + 20, len(self.waypoints) - 1)
 
         for i in range(self.cur_idx, search_limit):
-            curr_p = self.waypoints[i]
-            next_p = self.waypoints[i+1]
-            yaw1 = math.atan2(next_p[1] - curr_p[1], next_p[0] - curr_p[0])
-
             if i + 2 < len(self.waypoints):
+                curr_p = self.waypoints[i]
+                next_p = self.waypoints[i+1]
+                yaw1 = math.atan2(next_p[1] - curr_p[1], next_p[0] - curr_p[0])
                 next_next_p = self.waypoints[i+2]
                 yaw2 = math.atan2(next_next_p[1] - next_p[1], next_next_p[0] - next_p[0])
                 diff = abs(yaw1 - yaw2)
                 diff = (diff + math.pi) % (2 * math.pi) - math.pi
 
-                if abs(diff) > math.radians(150):
+                if abs(diff) > math.pi / 2: # math.radians(150)
                     switch_idx = i+1
                     dist_to_switch = math.hypot(x - self.waypoints[switch_idx][0], y - self.waypoints[switch_idx][1])
                     break
@@ -463,12 +455,11 @@ class PlannerSkeleton:
         start_search = self.cur_idx
         end_search = min(len(self.waypoints), self.cur_idx + 20)
 
-        if switch_idx != -1 and dist_to_switch > 0.05 * self.cell_size:
+        if switch_idx != -1 and dist_to_switch > 0.5 * self.cell_size:
             end_search = min(end_search, switch_idx + 1)
         for i in range(start_search, end_search):
             wx, wy = self.waypoints[i]
-            if not is_reversing_search:
-                wx, wy = wx + L*math.cos(yaw), wy + L*math.sin(yaw)
+            wx, wy = wx + L*math.cos(yaw), wy + L*math.sin(yaw)
             dist = math.hypot(search_x - wx, search_y - wy)
             if dist < min_dist:
                 min_dist = dist
@@ -489,43 +480,40 @@ class PlannerSkeleton:
         angle_to_path = (angle_to_path + math.pi) % (2 * math.pi) - math.pi
 
         # 후진 조향각 처리
-        if_reverse = abs(angle_to_path) > math.pi / 2
-            # path_yaw = (path_yaw + math.pi) % (2 * math.pi) - math.pi
+        if not self.is_reverse:
+            self.is_reverse = abs(angle_to_path) > math.pi / 2
 
-        if switch_idx != -1:
-            if dist_to_switch > 0.2 * self.cell_size:
-                if v > -0.05:
-                    if_reverse = False
-                elif v < 0.05:
-                    if_reverse = True
-
-        if if_reverse:
-            calc_x, calc_y = x, y # 후진할 땐 후륜이 앞바퀴라고 가정 후 stanley 적용
-            next_x, next_y = tx, ty
-            path_yaw = (path_yaw + math.pi) % (2 * math.pi) - math.pi
-            k = 0.3
-
-            # 각도 error 재계산
-            angle_to_path = path_yaw - yaw
-            angle_to_path = (angle_to_path + math.pi) % (2 * math.pi) - math.pi
+        dist_to_goal = math.hypot(target_x_front - front_x, target_y_front - front_y)
+              
+        if self.is_reverse:
+            cte = -math.sin(path_yaw) * (x- tx) + \
+                math.cos(path_yaw) * (x - ty)
+            
+            heading_error = (path_yaw - yaw + math.pi) % (2*math.pi) - math.pi
+            
+            if dist_to_goal > 5.0 * self.cell_size:
+                k = 1.0
+                soft_v = 3.0
+            else:
+                k = 0.8
+                soft_v = 3.0 
+            
+            new_steer = heading_error - math.atan2(k * cte, max(abs(v), soft_v))
+            
         else:
-            calc_x, calc_y = front_x, front_y
+            target_front_x = tx + L * math.cos(path_yaw)
+            target_front_y = ty + L * math.sin(path_yaw)
+            
+            cte = -math.sin(path_yaw) * (front_x - target_front_x) + \
+                math.cos(path_yaw) * (front_y - target_front_y)
+            # 전진 파라미터
+            k = 4.0
+            soft_v = 0.1  
+            new_steer = angle_to_path - math.atan2(k * cte, max(abs(v), soft_v))
 
-            path_cos = math.cos(path_yaw)
-            path_sin = math.sin(path_yaw)
-            next_x = tx + L*path_cos
-            next_y = ty + L*path_sin
-            k = 3.0
-
-        cte = -math.sin(path_yaw) * (calc_x - next_x) + \
-              math.cos(path_yaw) * (calc_y - next_y)
-
-        new_steer = angle_to_path - math.atan2(k * cte, max(v, 1.5))
         new_steer = new_steer if maxSteer > abs(new_steer) else maxSteer if new_steer > 0 else -maxSteer
 
         # 속도 제어 (P 제어기)
-
-        dist_to_goal = math.hypot(target_x - front_x, target_y_front - front_y)
 
         check_dist = dist_to_goal
 
@@ -566,7 +554,7 @@ class PlannerSkeleton:
             accel = 0.0
             brake = min(brake, maxBrake)
 
-        if if_reverse:
+        if self.is_reverse:
             if v > 0.1:
                 accel = 0.0
                 brake = maxBrake
@@ -575,17 +563,23 @@ class PlannerSkeleton:
                 accel = 0.0
                 brake = maxBrake
 
-        if dist_to_goal < 0.3*self.cell_size:
-            accel = 0.0
-            brake = maxBrake
+        if self.is_reverse:
+            if dist_to_goal < 2.0*self.cell_size:
+                accel = 0.0
+                brake = maxBrake
+                
+                new_steer = 0.0
+        else:
+            if dist_to_goal < 0.3*self.cell_size:
+                accel = 0.0
+                brake = maxBrake
 
-        print(f"cellsize: {self.cell_size}, dist_to_goal: {dist_to_goal:.2f}, target_v: {target_v:.2f}, steer: {new_steer:.2f}, accel: {accel:.2f}, brake: {brake:.2f}, next_point: {cx:.2f}, {cy:.2f} , target_point: {target_x_front:.2f}, {target_y_front:.2f}")
-        
+        print(f"cellsize: {self.cell_size}, dist_to_goal: {dist_to_goal:.2f}, target_v: {target_v:.2f}, steer: {new_steer:.2f}, accel: {accel:.2f}, brake: {brake:.2f}, target_point: {target_x_front:.2f}, {target_y_front:.2f}")
         return {
             "steer": float(new_steer),
             "accel": float(accel),
             "brake": float(brake),
-            "gear": "R" if if_reverse else "D"
+            "gear": "R" if self.is_reverse else "D"
         }
 
 
