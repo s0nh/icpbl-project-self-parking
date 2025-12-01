@@ -38,7 +38,6 @@ class PlannerSkeleton:
     base_board = None
     collision_map = None
     cur_idx = 0
-    target_yaw_dir = "up"
     is_reverse = False
 
     def __post_init__(self) -> None:
@@ -128,7 +127,7 @@ class PlannerSkeleton:
                 if 0 <= nx < len(self.base_board[0]) and 0 <= ny < len(self.base_board):
                     if self.collision_map[ny][nx] == 0:
                         self.collision_map[ny][nx] = current_dist + 1
-                        if self.collision_map[ny][nx] == 5:
+                        if self.collision_map[ny][nx] == 7:
                             continue
                         q.append((nx, ny))
 
@@ -185,26 +184,48 @@ class PlannerSkeleton:
         maxBrake = obs["limits"]["maxBrake"]
         steerRate = obs["limits"]["steerRate"]
 
-        self.target_yaw_dir = "up"
+        # self.target_yaw_dir = "up"
+        # target_middle_x_idx, target_middle_y_idx = to_idx((x1+x2)/2, (y1+y2)/2)
+        # if self.expected_orientation == "front_in" :
+        #     if target_middle_y_idx > len(self.base_board)/3:
+        #         self.target_yaw_dir = "down"
+        # else:
+        #     if target_middle_y_idx < len(self.base_board)/3:
+        #         self.target_yaw_dir = "down"
+
         target_middle_x_idx, target_middle_y_idx = to_idx((x1+x2)/2, (y1+y2)/2)
-        if self.expected_orientation == "front_in" :
-            if target_middle_y_idx > len(self.base_board)/3:
-                self.target_yaw_dir = "down"
-        else:
+        forward = True
+        if self.expected_orientation == 'front_in':
             if target_middle_y_idx < len(self.base_board)/3:
-                self.target_yaw_dir = "down"
+                forward = False
+        else:
+            if target_middle_y_idx > len(self.base_board)/3:
+                forward = False
         
         target_x = (x1 + x2) / 2
         target_y = -1
-        if self.target_yaw_dir == "up": # 후륜지점으로 변경.
+        if self.expected_orientation == "front_in": # 후륜지점으로 변경.
             target_y = (y1 + y2) / 2 - L/6 # TODO: 왜 L/2가 아닐까? 고려
         else:
             target_y = (y1 + y2) / 2 + L/6
 
         target_hmap = [[-1] * len(self.base_board[0]) for _ in range(len(self.base_board))] ## target_pnt 로부터의 BFS 거리
         target_x_idx, target_y_idx = to_idx(target_x, target_y)
-        self.collision_map[target_y_idx-1][target_x_idx] = 0
-        self.collision_map[target_y_idx+1][target_x_idx] = 0
+        # self.collision_map[target_y_idx-1][target_x_idx] = 0
+        # self.collision_map[target_y_idx+1][target_x_idx] = 0
+        i, j = target_y_idx, target_x_idx
+        while self.collision_map[i][j] != 0:
+            self.collision_map[i][j] = 0
+            if i < len(self.base_board)/3:
+                i += 1
+            else:
+                i -= 1
+
+        with open("collision_map.txt", "w", encoding="utf-8") as f:
+            for p in self.collision_map:
+                print(*list(map(int, p)), file=f)
+
+
         target_hmap[target_y_idx][target_x_idx] = 0
         q = deque([(target_x_idx, target_y_idx)])
         while q:
@@ -263,10 +284,10 @@ class PlannerSkeleton:
         start_yaw_idx = round(yaw / 0.26)
         start_node = Node(start_x, start_y, yaw, start_x_idx, start_y_idx, start_yaw_idx, 0.0, 1, 0.0, "start", None)
 
-        target_yaw = yaw if self.target_yaw_dir == "up" else -yaw
+        target_yaw = yaw if self.expected_orientation == "front_in" else -yaw
         target_yaw_idx = round(yaw / 0.26)
         target_node = Node(target_x, target_y, target_yaw, target_x_idx, target_y_idx, target_yaw_idx, 0.0, 1, 0.0, "target", None)
-        if self.expected_orientation == "front_in":
+        if not forward:
             target_node.direction = -1
         pq = [(target_hmap[start_y_idx][start_x_idx], start_node), (start_hmap[target_y_idx][target_x_idx], target_node)]
         
@@ -281,7 +302,7 @@ class PlannerSkeleton:
                 if abs(next_steer-node.steer) > maxSteer:
                     continue
                 next_direction = node.direction
-                distance = next_direction * self.cell_size * 1.5
+                distance = next_direction * self.cell_size * 3.5
 
                 if abs(next_steer) < 0.001: ## 직진
                     next_yaw = node.yaw
@@ -295,7 +316,9 @@ class PlannerSkeleton:
                     next_y = node.y - R * (math.cos(next_yaw) - math.cos(node.yaw))
                     # 각도 정규화 (-pi ~ pi)
                     next_yaw = (next_yaw + math.pi) % (2 * math.pi) - math.pi
-
+                if node.kind == 'target':
+                    if abs(node.yaw) < abs(next_yaw):
+                        continue
                 next_yaw_idx = round(next_yaw/0.26)
                 next_x_idx, next_y_idx = to_idx(next_x, next_y)
                 if not (0 <= next_x_idx < len(self.base_board[0]) and 0 <= next_y_idx < len(self.base_board)):
@@ -347,12 +370,12 @@ class PlannerSkeleton:
                     if start_hmap[next_y_idx][next_x_idx] < 0:
                         continue
                     new_h = start_hmap[next_y_idx][next_x_idx]
-                
+                new_h += abs(next_yaw)
 
                 step_cost = abs(distance)
                 
                 if abs(next_steer - node.steer) > 0.001:
-                    step_cost += abs(distance)*2 ## 핸들조작 패널티
+                    step_cost += abs(distance)*3 ## 핸들조작 패널티
 
                 new_cost = node.cost + step_cost
                 next_node = Node(next_x, next_y, next_yaw, next_x_idx, next_y_idx, next_yaw_idx, next_steer, next_direction, new_cost, node.kind, node)
@@ -416,7 +439,7 @@ class PlannerSkeleton:
         
         # 목표지점 전륜 좌표.
         target_x_front = target_x
-        if self.target_yaw_dir == "up":
+        if self.expected_orientation == "front_in":
                 target_y_front = target_y + L
         else:
                 target_y_front = target_y - L
@@ -487,7 +510,7 @@ class PlannerSkeleton:
               
         if self.is_reverse:
             cte = -math.sin(path_yaw) * (x- tx) + \
-                math.cos(path_yaw) * (x - ty)
+                math.cos(path_yaw) * (y - ty)
             
             heading_error = (path_yaw - yaw + math.pi) % (2*math.pi) - math.pi
             
@@ -499,7 +522,8 @@ class PlannerSkeleton:
                 soft_v = 3.0 
             
             new_steer = heading_error - math.atan2(k * cte, max(abs(v), soft_v))
-            
+            if 1.55 < abs(yaw) < 1.59:
+                new_steer = 0
         else:
             target_front_x = tx + L * math.cos(path_yaw)
             target_front_y = ty + L * math.sin(path_yaw)
