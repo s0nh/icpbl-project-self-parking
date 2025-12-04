@@ -560,23 +560,50 @@ class PlannerSkeleton:
                 self.is_reverse = abs(angle_to_path) > math.pi / 2
 
         dist_to_goal = math.hypot(target_x_front - front_x, target_y_front - front_y)
-              
+            
         if self.is_reverse:
-            cte = -math.sin(path_yaw) * (x- tx) + \
-                math.cos(path_yaw) * (y - ty)
+            new_steer = 0.0
+        if self.is_reverse:
+            ld_base = 3.0 # 기본 3m
+            ld_gain = 0.5
+            ld = ld_base + ld_gain * abs(v) 
+
+            last_x, last_y = self.waypoints[-1]
+            prev_x, prev_y = self.waypoints[-2]
+            heading = math.atan2(last_y - prev_y, last_x - prev_x)
+
+            extension_dist = 5.0
+            ext_x = last_x + extension_dist * math.cos(heading)
+            ext_y = last_y + extension_dist * math.cos(heading)
+
+            # Look-ahead Point 찾기
+            # 현재 인덱스부터 경로를 따라가며 ld보다 멀리 있는 점을 찾음
+            target_pt = (ext_x, ext_y)
             
-            heading_error = (path_yaw - yaw + math.pi) % (2*math.pi) - math.pi
+            for i in range(self.cur_idx, len(self.waypoints)):
+                wx, wy = self.waypoints[i]
+                d = math.hypot(wx - x, wy - y)
+                if d > ld:
+                    target_pt = (wx, wy)
+                    break
             
-            if dist_to_goal > 5.0 * self.cell_size:
-                k = 1.0
-                soft_v = 3.0
-            else:
-                k = 5.0 # 0.8
-                soft_v = 1.0  #3.0
+            t_px, t_py = target_pt
             
-            new_steer = heading_error - math.atan2(k * cte, max(abs(v), soft_v))
-            if 1.55 < abs(yaw) < 1.59:
-                new_steer = 0
+            # Alpha 계산 (차량 후방 기준)
+            # 차량의 후방은 yaw + pi 입니다.
+            rear_yaw = yaw + math.pi
+            
+            # 타겟을 바라보는 각도
+            target_angle = math.atan2(t_py - y, t_px - x)
+            
+            # 후방 벡터와 타겟 벡터 사이의 각도 차이
+            alpha = target_angle - rear_yaw
+            alpha = (alpha + math.pi) % (2 * math.pi) - math.pi
+            
+            # Pure Pursuit 공식 적용
+            # delta = atan(2 * L * sin(alpha) / Ld)
+            new_steer = -math.atan2(2.0 * L * math.sin(alpha), ld)
+
         else:
             target_front_x = tx + L * math.cos(path_yaw)
             target_front_y = ty + L * math.sin(path_yaw)
@@ -598,11 +625,11 @@ class PlannerSkeleton:
             check_dist = dist_to_switch
 
         if check_dist > 15.0*self.cell_size:
-            target_v = 10.0*self.cell_size
+            target_v = 15.0*self.cell_size
         elif check_dist > 10.0*self.cell_size:
-            target_v = 8.0*self.cell_size
+            target_v = 10.0*self.cell_size
         elif check_dist > 5.0*self.cell_size:
-            target_v = 3.0*self.cell_size
+            target_v = 5.0*self.cell_size
         elif check_dist > 1.5*self.cell_size:
             target_v = 1.5*self.cell_size
         elif check_dist > 0.5*self.cell_size:
