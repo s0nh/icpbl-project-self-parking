@@ -338,7 +338,7 @@ class PlannerSkeleton:
                         if dist < 0.05:
                             yaw_diff = abs(node.yaw - matched_node.yaw)
                             yaw_diff = (yaw_diff + math.pi) % (2*math.pi) -math.pi
-                            if abs(yaw_diff) >0.1:
+                            if abs(yaw_diff) > 0.1:
                                 continue
                         else:
                             path_angle = math.atan2(dy, dx)
@@ -354,7 +354,7 @@ class PlannerSkeleton:
                             pred_yaw_f = (node.yaw + 2 * alpha_f) % (2* math.pi)
                             yaw_err_f = abs(pred_yaw_f - matched_node.yaw)
                             yaw_err_f = (yaw_err_f + math.pi) % (2*math.pi) - math.pi
-                            valid_f_heading = abs(yaw_err_f) < 0.08 # 13~15도 오차 허용
+                            valid_f_heading = abs(yaw_err_f) < 0.08
                             
                             can_go_forward = valid_f_steer and valid_f_heading
                             
@@ -369,7 +369,7 @@ class PlannerSkeleton:
                             pred_yaw_r = (node.yaw - 2 * alpha_r) % (2 * math.pi)
                             yaw_err_r = abs(pred_yaw_r - matched_node.yaw)
                             yaw_err_r = (yaw_err_r + math.pi) % (2*math.pi) - math.pi
-                            valid_r_heading = abs(yaw_err_r) < 0.08
+                            valid_r_heading = abs(yaw_err_r) < 0.01
                             
                             can_go_reverse = valid_r_steer and valid_r_heading
                             
@@ -559,7 +559,7 @@ class PlannerSkeleton:
             else:
                 self.is_reverse = abs(angle_to_path) > math.pi / 2
 
-        dist_to_goal = math.hypot(target_x_front - front_x, target_y_front - front_y)
+        dist_to_goal = math.hypot(target_x - x, target_y - y)
             
         if self.is_reverse:
             new_steer = 0.0
