@@ -515,7 +515,9 @@ class PlannerSkeleton:
                 if abs(diff) > math.pi / 2: # math.radians(150)
                     switch_idx = i+1
                     print(switch_idx)
-                    dist_to_switch = math.hypot(x - self.waypoints[switch_idx][0], y - self.waypoints[switch_idx][1])
+                    switch_front_x = self.waypoints[switch_idx][0] + L*yaw1
+                    switch_front_y = self.waypoints[switch_idx][1] + L*yaw1
+                    dist_to_switch = math.hypot(x - switch_front_x, y - switch_front_y)
                     break
 
         # 가까운 경로 찾기
@@ -559,12 +561,15 @@ class PlannerSkeleton:
             else:
                 self.is_reverse = abs(angle_to_path) > math.pi / 2
 
-        dist_to_goal = math.hypot(target_x - x, target_y - y)
+        if self.is_reverse:
+            dist_to_goal = math.hypot(target_x - x, target_y - y)
+        else:
+            dist_to_goal = math.hypot(target_x_front - front_x, target_y_front - front_y)
             
         if self.is_reverse:
             new_steer = 0.0
         if self.is_reverse:
-            ld_base = 3.0 # 기본 3m
+            ld_base = 1.5 # 기본 3m
             ld_gain = 0.5
             ld = ld_base + ld_gain * abs(v) 
 
@@ -625,11 +630,11 @@ class PlannerSkeleton:
             check_dist = dist_to_switch
 
         if check_dist > 15.0*self.cell_size:
-            target_v = 15.0*self.cell_size
+            target_v = 13.0*self.cell_size
         elif check_dist > 10.0*self.cell_size:
-            target_v = 10.0*self.cell_size
+            target_v = 8.0*self.cell_size
         elif check_dist > 5.0*self.cell_size:
-            target_v = 5.0*self.cell_size
+            target_v = 3.0*self.cell_size
         elif check_dist > 1.5*self.cell_size:
             target_v = 1.5*self.cell_size
         elif check_dist > 0.5*self.cell_size:
