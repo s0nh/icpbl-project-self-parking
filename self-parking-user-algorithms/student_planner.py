@@ -138,29 +138,6 @@ class PlannerSkeleton:
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ## ==============================================          compute_path             ==============================================================================================
     def compute_path(self, obs: Dict[str, Any]) -> None:
         """관측과 맵을 이용해 경로(웨이포인트)를 준비합니다."""
@@ -184,15 +161,6 @@ class PlannerSkeleton:
         maxBrake = obs["limits"]["maxBrake"]
         steerRate = obs["limits"]["steerRate"]
 
-        # self.target_yaw_dir = "up"
-        # target_middle_x_idx, target_middle_y_idx = to_idx((x1+x2)/2, (y1+y2)/2)
-        # if self.expected_orientation == "front_in" :
-        #     if target_middle_y_idx > len(self.base_board)/3:
-        #         self.target_yaw_dir = "down"
-        # else:
-        #     if target_middle_y_idx < len(self.base_board)/3:
-        #         self.target_yaw_dir = "down"
-
         target_middle_x_idx, target_middle_y_idx = to_idx((x1+x2)/2, (y1+y2)/2)
         forward = True
         if self.expected_orientation == 'front_in':
@@ -205,7 +173,7 @@ class PlannerSkeleton:
         target_x = (x1 + x2) / 2
         target_y = -1
         if self.expected_orientation == "front_in": # 후륜지점으로 변경.
-            target_y = (y1 + y2) / 2 - L/4 # TODO: 왜 L/2가 아닐까? 고려
+            target_y = (y1 + y2) / 2 - L/4
         else:
             target_y = (y1 + y2) / 2 + L/4
 
@@ -392,8 +360,6 @@ class PlannerSkeleton:
                         # control 함수 돌리기 전 전처리
                         self.cur_idx = 0
                         self.is_reverse = False
-                        print(self.waypoints)
-
                         ##-------------------------DEBUG---------------------------
                         debug_map = []
                         for p in self.base_board:
@@ -436,30 +402,6 @@ class PlannerSkeleton:
 ## =========================================================================================================================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     def compute_control(self, obs: Dict[str, Any]) -> Dict[str, float]:
         """경로를 따라가기 위한 조향/가감속 명령을 산출합니다."""
         if not self.waypoints:
@@ -472,15 +414,11 @@ class PlannerSkeleton:
         x = obs["state"]["x"]
         y = obs["state"]["y"]
         yaw = obs["state"]["yaw"] 
-        orientation = obs["state"].get("expected_orientation", None)
-        #target_x1, target_x2, target_y1, target_y2 = obs["target_slot"]
-        #target_x, target_y = (target_x1 + target_x2) / 2, (target_y1 + target_y2)/2
         dt = obs["limits"]["dt"]
         L = obs["limits"]["L"]
         maxSteer = obs["limits"]["maxSteer"]
         maxAccel = obs["limits"]["maxAccel"]
         maxBrake = obs["limits"]["maxBrake"]
-        steerRate = obs["limits"]["steerRate"]
 
         # 조향각 구하기 Stanley 알고리즘 사용
 
@@ -559,14 +497,16 @@ class PlannerSkeleton:
                 self.is_reverse = abs(angle_to_path) > math.pi / 2
 
         if self.is_reverse:
+            # 후진은 후륜기준으로 목표거리 측정
             dist_to_goal = math.hypot(target_x - x, target_y - y)
         else:
+            # 전진이면 전륜기준으로 목표거리 측정
             dist_to_goal = math.hypot(target_x_front - front_x, target_y_front - front_y)
             
         if self.is_reverse:
             new_steer = 0.0
         if self.is_reverse:
-            ld_base = 1.5 # 기본 3m
+            ld_base = 1.5
             ld_gain = 0.5
             ld = ld_base + ld_gain * abs(v) 
 
@@ -592,7 +532,6 @@ class PlannerSkeleton:
             t_px, t_py = target_pt
             
             # Alpha 계산 (차량 후방 기준)
-            # 차량의 후방은 yaw + pi 입니다.
             rear_yaw = yaw + math.pi
             
             # 타겟을 바라보는 각도
@@ -607,9 +546,11 @@ class PlannerSkeleton:
             new_steer = -math.atan2(2.0 * L * math.sin(alpha), ld)
 
         else:
+            # waypoint 후륜좌표를 전륜 좌표로 변경
             target_front_x = tx + L * math.cos(path_yaw)
             target_front_y = ty + L * math.sin(path_yaw)
             
+            # stanley 알고리즘
             cte = -math.sin(path_yaw) * (front_x - target_front_x) + \
                 math.cos(path_yaw) * (front_y - target_front_y)
             # 전진 파라미터
@@ -676,128 +617,12 @@ class PlannerSkeleton:
                 accel = 0.0
                 brake = maxBrake
 
-        print(f"cellsize: {self.cell_size}, dist_to_goal: {check_dist:.2f}, target_v: {target_v:.2f}, steer: {new_steer:.2f}, accel: {accel:.2f}, brake: {brake:.2f}, target_point: {target_x_front:.2f}, {target_y_front:.2f}, cur: {x:.2f}, {y:.2f}, 변곡: {self.waypoints[switch_idx][0]:.2f}, {self.waypoints[switch_idx][1]:.2f}")
         return {
             "steer": float(new_steer),
             "accel": float(accel),
             "brake": float(brake),
             "gear": "R" if self.is_reverse else "D"
         }
-
-
-
-
-        # 예시: 기본 데모 제어. 학생은 원하는 알고리즘으로 대체하면 됩니다.
-
-        """
-        t = float(obs.get("t", 0.0))
-        v = float(obs.get("state", {}).get("v", 0.0))
-        x = obs["state"]["x"] - self.map_extent[0] ## 0 ~ max_x로 범위 제한
-        y = self.map_extent[3] - obs["state"]["y"] ## 0 ~ max_y로 범위 제한
-        print(x, y)
-        yaw = obs["state"]["yaw"] 
-        target_x1, target_x2, target_y1, target_y2 = obs["target_slot"]
-        target_x, target_y = (target_x1 + target_x2) / 2 - self.map_extent[0], self.map_extent[3] - (target_y1 + target_y2)/2
-        dt = obs["limits"]["dt"]
-        L = obs["limits"]["L"]
-        maxSteer = obs["limits"]["maxSteer"]
-        maxAccel = obs["limits"]["maxAccel"]
-        maxBrake = obs["limits"]["maxBrake"]
-        steerRate = obs["limits"]["steerRate"]
-        cmd = {"steer": 0.0, "accel": 0.0, "brake": 0.0, "gear": "D"}
-
-        min_dist = float('inf')
-        current_idx = -1
-
-        for i, (wx, wy) in enumerate(self.waypoints):
-            if math.hypot(x-wx, y-wy) < min_dist:
-                min_dist = math.hypot(x-wx, y-wy)
-                current_idx = i
-        
-        lookahead_dist = 1.5 * self.cell_size * v
-        target_point = self.waypoints[-1][0], self.map_extent[3]-self.waypoints[-1][1]
-
-        for i in range(current_idx, len(self.waypoints)):
-            wx, wy = self.waypoints[i][0], self.map_extent[3]-self.waypoints[i][1]
-            dist = math.hypot(wx - x, wy - y)
-            if dist > lookahead_dist:
-                target_point = (wx, wy)
-                break
-        
-        tx, ty = target_point
-        print(tx, ty)
-        angle_to_target = math.atan2(ty - y, tx - x)
-        alpha = angle_to_target - yaw
-        alpha = (alpha + math.pi) % (2 * math.pi) - math.pi
-        gear = "D"
-        if abs(alpha) > math.pi/2: ## 차량 후방 -> 후진해야 하는 상황
-            gear = "R"
-            alpha = yaw+math.pi-alpha
-            alpha = (alpha + math.pi) % (2 * math.pi) - math.pi
-        steer_cmd = math.atan2(2.0 * L * math.sin(alpha), lookahead_dist)
-
-        final_x, final_y = self.waypoints[-1]
-        dist_to_goal = math.hypot(final_x - x, final_y - y)
-
-        accel_cmd = 0.0
-        brake_cmd = 0.0
-
-        # 목표 속도 설정
-        if dist_to_goal < 0.5:   # 도착 완료 (0.5m 이내)
-            target_v = 0.0
-            brake_cmd = 1.0      # 풀 브레이크
-        elif dist_to_goal < 3.0: # 근처 진입
-            target_v = 1.0       # 서행
-        else:
-            target_v = 2.5       # 주행
-        
-        # 이미 도착했으면 조향도 멈춤
-        if dist_to_goal < 0.5:
-            return {"steer": 0.0, "accel": 0.0, "brake": 1.0, "gear": gear}
-
-        # 속도 오차에 따른 제어 (후진일 때는 속도 부호 고려)
-        current_speed_abs = abs(v)
-        if current_speed_abs < target_v:
-            accel_cmd = 0.5 # 가속 (단순화: 목표보다 느리면 밟음)
-            brake_cmd = 0.0
-        else:
-            accel_cmd = 0.0
-            brake_cmd = 0.2 # 감속
-
-        
-        return {
-            "steer": float(steer_cmd), 
-            "accel": float(accel_cmd), 
-            "brake": float(brake_cmd), 
-            "gear": gear
-        }"""
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # 전역 planner 인스턴스 (통신 모듈이 이 객체를 사용합니다.)
@@ -818,4 +643,3 @@ def planner_step(obs: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as exc:
         print(f"[algo] planner_step error: {exc}")
         return {"steer": 0.0, "accel": 0.0, "brake": 0.5, "gear": "D"}
-
