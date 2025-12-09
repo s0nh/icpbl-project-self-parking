@@ -127,7 +127,7 @@ class PlannerSkeleton:
                 if 0 <= nx < len(self.base_board[0]) and 0 <= ny < len(self.base_board):
                     if self.collision_map[ny][nx] == 0:
                         self.collision_map[ny][nx] = current_dist + 1
-                        if self.collision_map[ny][nx] == 7:
+                        if self.collision_map[ny][nx] == 6:
                             continue
                         q.append((nx, ny))
 
@@ -511,13 +511,10 @@ class PlannerSkeleton:
                 yaw2 = math.atan2(next_next_p[1] - next_p[1], next_next_p[0] - next_p[0])
                 diff = abs(yaw1 - yaw2)
                 diff = (diff + math.pi) % (2*math.pi) - math.pi
-
                 if abs(diff) > math.pi / 2: # math.radians(150)
                     switch_idx = i+1
                     print(switch_idx)
-                    switch_front_x = self.waypoints[switch_idx][0] + L*yaw1
-                    switch_front_y = self.waypoints[switch_idx][1] + L*yaw1
-                    dist_to_switch = math.hypot(x - switch_front_x, y - switch_front_y)
+                    dist_to_switch = math.hypot(x - self.waypoints[switch_idx][0], y - self.waypoints[switch_idx][1])
                     break
 
         # 가까운 경로 찾기
@@ -527,7 +524,7 @@ class PlannerSkeleton:
 
         if switch_idx != -1 and dist_to_switch > 0.5 * self.cell_size:
             if self.cur_idx == switch_idx - 1:
-                min_dist = 0.01*self.cell_size
+                min_dist = self.cell_size
             end_search = min(end_search, switch_idx + 1)
         for i in range(start_search, end_search):
             wx, wy = self.waypoints[i]
