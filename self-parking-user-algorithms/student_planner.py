@@ -378,13 +378,18 @@ class PlannerSkeleton:
         # 조향각 구하기 Stanley 알고리즘 사용
 
         target_x, target_y = self.waypoints[-1] # 후륜 지점.
+
+        last_x, last_y = self.waypoints[-1]
+        prev_x, prev_y = self.waypoints[-2]
+        heading = math.atan2(last_y - prev_y, last_x - prev_x)
         
         # 목표지점 전륜 좌표.
-        target_x_front = target_x
         if self.expected_orientation == "front_in":
-                target_y_front = target_y + L
+                target_x_front = target_x + L * math.cos(heading) * 1.5
+                target_y_front = target_y + L * math.sin(heading) * 1.5
         else:
-                target_y_front = target_y - L
+                target_x_front = target_x - L * math.cos(heading)
+                target_y_front = target_y - L * math.sin(heading)
 
         # 현재 좌표 전륜 위치 계산
         front_x = x + L * math.cos(yaw)
@@ -464,10 +469,6 @@ class PlannerSkeleton:
             ld_base = 1.5
             ld_gain = 0.5
             ld = ld_base + ld_gain * abs(v) 
-
-            last_x, last_y = self.waypoints[-1]
-            prev_x, prev_y = self.waypoints[-2]
-            heading = math.atan2(last_y - prev_y, last_x - prev_x)
 
             extension_dist = 5.0
             ext_x = last_x + extension_dist * math.cos(heading)
@@ -561,24 +562,24 @@ class PlannerSkeleton:
                 accel = 0.0
                 brake = maxBrake
 
-        # if self.is_reverse:
-        #     if dist_to_goal < 2.0*self.cell_size:
-        #         accel = 0.0
-        #         brake = maxBrake
+        if self.is_reverse:
+            if dist_to_goal < 2.0*self.cell_size:
+                accel = 0.0
+                brake = maxBrake
                 
-        #         new_steer = 0.0
-        # else:
-        #     if dist_to_goal < 0.1*self.cell_size:
-        #         accel = 0.0
-        #         brake = maxBrake
+                new_steer = 0.0
+        else:
+            if dist_to_goal < 2.0*self.cell_size:
+                accel = 0.0
+                brake = maxBrake
         
         # if len(self.waypoints) - self.cur_idx-1 < 1:
         #     accel = 0.0
         #     brake = maxBrake
 
-        if math.hypot(x - target_x, y - target_y) < 0.1:
-            accel = 0
-            brake = maxBrake
+        # if math.hypot(x - target_x, y - target_y) < 0.1:
+        #     accel = 0
+        #     brake = maxBrake
 
         return {
             "steer": float(new_steer),
