@@ -374,7 +374,7 @@ class PlannerSkeleton:
         maxSteer = obs["limits"]["maxSteer"]
         maxAccel = obs["limits"]["maxAccel"]
         maxBrake = obs["limits"]["maxBrake"]
-
+        
         # 조향각 구하기 Stanley 알고리즘 사용
 
         target_x, target_y = self.waypoints[-1] # 후륜 지점.
@@ -384,12 +384,8 @@ class PlannerSkeleton:
         heading = math.atan2(last_y - prev_y, last_x - prev_x)
         
         # 목표지점 전륜 좌표.
-        if self.expected_orientation == "front_in":
-                target_x_front = target_x + L * math.cos(heading) * 1.5
-                target_y_front = target_y + L * math.sin(heading) * 1.5
-        else:
-                target_x_front = target_x - L * math.cos(heading)
-                target_y_front = target_y - L * math.sin(heading)
+        target_x_front = target_x + L * math.cos(heading) * 1.5
+        target_y_front = target_y + L * math.sin(heading) * 1.5
 
         # 현재 좌표 전륜 위치 계산
         front_x = x + L * math.cos(yaw)
@@ -411,7 +407,6 @@ class PlannerSkeleton:
                 diff = (diff + math.pi) % (2*math.pi) - math.pi
                 if abs(diff) > math.pi / 2: # math.radians(150)
                     switch_idx = i+1
-                    print(switch_idx)
                     dist_to_switch = math.hypot(x - self.waypoints[switch_idx][0], y - self.waypoints[switch_idx][1])
                     break
 
@@ -503,12 +498,12 @@ class PlannerSkeleton:
 
         else:
             # waypoint 후륜좌표를 전륜 좌표로 변경
-            target_front_x = tx + L * math.cos(path_yaw)
-            target_front_y = ty + L * math.sin(path_yaw)
+            next_front_x = tx + L * math.cos(path_yaw)
+            next_front_y = ty + L * math.sin(path_yaw)
             
             # stanley 알고리즘
-            cte = -math.sin(path_yaw) * (front_x - target_front_x) + \
-                math.cos(path_yaw) * (front_y - target_front_y)
+            cte = -math.sin(path_yaw) * (front_x - next_front_x) + \
+                math.cos(path_yaw) * (front_y - next_front_y)
             # 전진 파라미터
             k = 4.0
             soft_v = 0.1  
@@ -573,14 +568,6 @@ class PlannerSkeleton:
                 accel = 0.0
                 brake = maxBrake
         
-        # if len(self.waypoints) - self.cur_idx-1 < 1:
-        #     accel = 0.0
-        #     brake = maxBrake
-
-        # if math.hypot(x - target_x, y - target_y) < 0.1:
-        #     accel = 0
-        #     brake = maxBrake
-
         return {
             "steer": float(new_steer),
             "accel": float(accel),
