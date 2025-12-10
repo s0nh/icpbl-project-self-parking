@@ -249,11 +249,11 @@ class PlannerSkeleton:
             def __lt__(self, other):
                 return self.cost < other.cost
 
-        start_yaw_idx = round(yaw / 0.05)
+        start_yaw_idx = round(yaw / 0.03)
         start_node = Node(start_x, start_y, yaw, start_x_idx, start_y_idx, start_yaw_idx, 0.0, 1, 0.0, "start", None)
 
         target_yaw = yaw if self.expected_orientation == "front_in" else -yaw
-        target_yaw_idx = round(target_yaw / 0.05)
+        target_yaw_idx = round(target_yaw / 0.03)
         target_node = Node(target_x, target_y, target_yaw, target_x_idx, target_y_idx, target_yaw_idx, 0.0, 1, 0.0, "target", None)
         if not forward:
             target_node.direction = -1
@@ -287,7 +287,7 @@ class PlannerSkeleton:
                 if node.kind == 'target':
                     if abs(node.yaw) < abs(next_yaw):
                         continue
-                next_yaw_idx = round(next_yaw/0.05)
+                next_yaw_idx = round(next_yaw/0.03)
                 next_x_idx, next_y_idx = to_idx(next_x, next_y)
                 if not (0 <= next_x_idx < len(self.base_board[0]) and 0 <= next_y_idx < len(self.base_board)):
                     continue
@@ -352,7 +352,7 @@ class PlannerSkeleton:
 
                 visited[(next_x_idx, next_y_idx, next_yaw_idx)] = next_node
 
-                heapq.heappush(pq, (new_h*1.5+new_cost, next_node))
+                heapq.heappush(pq, (new_h+new_cost, next_node))
     
 ## =========================================================================================================================================================================
 
