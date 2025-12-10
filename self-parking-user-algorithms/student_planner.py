@@ -249,11 +249,11 @@ class PlannerSkeleton:
             def __lt__(self, other):
                 return self.cost < other.cost
 
-        start_yaw_idx = round(yaw / 0.26)
+        start_yaw_idx = round(yaw / 0.05)
         start_node = Node(start_x, start_y, yaw, start_x_idx, start_y_idx, start_yaw_idx, 0.0, 1, 0.0, "start", None)
 
         target_yaw = yaw if self.expected_orientation == "front_in" else -yaw
-        target_yaw_idx = round(yaw / 0.26)
+        target_yaw_idx = round(target_yaw / 0.05)
         target_node = Node(target_x, target_y, target_yaw, target_x_idx, target_y_idx, target_yaw_idx, 0.0, 1, 0.0, "target", None)
         if not forward:
             target_node.direction = -1
@@ -287,7 +287,7 @@ class PlannerSkeleton:
                 if node.kind == 'target':
                     if abs(node.yaw) < abs(next_yaw):
                         continue
-                next_yaw_idx = round(next_yaw/0.26)
+                next_yaw_idx = round(next_yaw/0.05)
                 next_x_idx, next_y_idx = to_idx(next_x, next_y)
                 if not (0 <= next_x_idx < len(self.base_board[0]) and 0 <= next_y_idx < len(self.base_board)):
                     continue
@@ -299,51 +299,6 @@ class PlannerSkeleton:
                     matched_node = visited[(next_x_idx, next_y_idx, next_yaw_idx)]
                     
                     if matched_node.kind != node.kind:
-                        dx = matched_node.x - node.x
-                        dy = matched_node.y - node.y
-                        dist = math.hypot(dx, dy)
-                        
-                        if dist < 0.05:
-                            yaw_diff = abs(node.yaw - matched_node.yaw)
-                            yaw_diff = (yaw_diff + math.pi) % (2*math.pi) -math.pi
-                            if abs(yaw_diff) > 0.1:
-                                continue
-                        else:
-                            path_angle = math.atan2(dy, dx)
-                            
-                            # front check
-                            alpha_f = path_angle - node.yaw
-                            alpha_f = (alpha_f + math.pi) % (2*math.pi) - math.pi
-                            
-                            req_steer_f = math.atan2(2.0 * L * math.sin(alpha_f), dist)
-                            
-                            valid_f_steer = (abs(req_steer_f) <= maxSteer * 0.95) and (abs(alpha_f) < math.pi/2)
-                            
-                            pred_yaw_f = (node.yaw + 2 * alpha_f) % (2* math.pi)
-                            yaw_err_f = abs(pred_yaw_f - matched_node.yaw)
-                            yaw_err_f = (yaw_err_f + math.pi) % (2*math.pi) - math.pi
-                            valid_f_heading = abs(yaw_err_f) < 0.08
-                            
-                            can_go_forward = valid_f_steer and valid_f_heading
-                            
-                            # reverse check
-                            alpha_r = path_angle - (node.yaw + math.pi)
-                            alpha_r = (alpha_r + math.pi) % (2*math.pi) - math.pi
-                            
-                            req_steer_r = math.atan2(2.0 * L * math.sin(alpha_r), dist)
-                            
-                            valid_r_steer = (abs(req_steer_r) <= maxSteer * 0.95) and (abs(alpha_r) < math.pi/2)
-                            
-                            pred_yaw_r = (node.yaw - 2 * alpha_r) % (2 * math.pi)
-                            yaw_err_r = abs(pred_yaw_r - matched_node.yaw)
-                            yaw_err_r = (yaw_err_r + math.pi) % (2*math.pi) - math.pi
-                            valid_r_heading = abs(yaw_err_r) < 0.01
-                            
-                            can_go_reverse = valid_r_steer and valid_r_heading
-                            
-                            if not can_go_forward and not can_go_reverse:
-                                continue
-                            
                         first_node, final_node = visited[(next_x_idx, next_y_idx, next_yaw_idx)], node
                         if node.kind == "start":
                             first_node, final_node = node, visited[(next_x_idx, next_y_idx, next_yaw_idx)]
@@ -361,18 +316,18 @@ class PlannerSkeleton:
                         self.cur_idx = 0
                         self.is_reverse = False
                         ##-------------------------DEBUG---------------------------
-                        debug_map = []
-                        for p in self.base_board:
-                            debug_map.append(p[:])
-                        print(path)
-                        for x, y in path:
-                            x_idx, y_idx = to_idx(x, y)
-                            if 0 <= x_idx < len(self.base_board[0]) and 0 <= y_idx < len(self.base_board):
-                                debug_map[y_idx][x_idx] = 1
-                        with open("final_path.txt", "w", encoding="utf-8") as f:
-                            for p in debug_map:
-                                print(*p, sep='\t', file=f)
-                        ##---------------------------------------------------------
+                        # debug_map = []
+                        # for p in self.base_board:
+                        #     debug_map.append(p[:])
+                        # print(path)
+                        # for x, y in path:
+                        #     x_idx, y_idx = to_idx(x, y)
+                        #     if 0 <= x_idx < len(self.base_board[0]) and 0 <= y_idx < len(self.base_board):
+                        #         debug_map[y_idx][x_idx] = 1
+                        # with open("final_path.txt", "w", encoding="utf-8") as f:
+                        #     for p in debug_map:
+                        #         print(*p, sep='\t', file=f)
+                        # ##---------------------------------------------------------
                         return
                     continue
 
@@ -397,7 +352,7 @@ class PlannerSkeleton:
 
                 visited[(next_x_idx, next_y_idx, next_yaw_idx)] = next_node
 
-                heapq.heappush(pq, (new_h+new_cost, next_node))
+                heapq.heappush(pq, (new_h*1.5+new_cost, next_node))
     
 ## =========================================================================================================================================================================
 
@@ -423,13 +378,18 @@ class PlannerSkeleton:
         # 조향각 구하기 Stanley 알고리즘 사용
 
         target_x, target_y = self.waypoints[-1] # 후륜 지점.
+
+        last_x, last_y = self.waypoints[-1]
+        prev_x, prev_y = self.waypoints[-2]
+        heading = math.atan2(last_y - prev_y, last_x - prev_x)
         
         # 목표지점 전륜 좌표.
-        target_x_front = target_x
         if self.expected_orientation == "front_in":
-                target_y_front = target_y + L
+                target_x_front = target_x + L * math.cos(heading) * 1.5
+                target_y_front = target_y + L * math.sin(heading) * 1.5
         else:
-                target_y_front = target_y - L
+                target_x_front = target_x - L * math.cos(heading)
+                target_y_front = target_y - L * math.sin(heading)
 
         # 현재 좌표 전륜 위치 계산
         front_x = x + L * math.cos(yaw)
@@ -509,10 +469,6 @@ class PlannerSkeleton:
             ld_base = 1.5
             ld_gain = 0.5
             ld = ld_base + ld_gain * abs(v) 
-
-            last_x, last_y = self.waypoints[-1]
-            prev_x, prev_y = self.waypoints[-2]
-            heading = math.atan2(last_y - prev_y, last_x - prev_x)
 
             extension_dist = 5.0
             ext_x = last_x + extension_dist * math.cos(heading)
@@ -613,9 +569,17 @@ class PlannerSkeleton:
                 
                 new_steer = 0.0
         else:
-            if dist_to_goal < 0.1*self.cell_size:
+            if dist_to_goal < 2.0*self.cell_size:
                 accel = 0.0
                 brake = maxBrake
+        
+        # if len(self.waypoints) - self.cur_idx-1 < 1:
+        #     accel = 0.0
+        #     brake = maxBrake
+
+        # if math.hypot(x - target_x, y - target_y) < 0.1:
+        #     accel = 0
+        #     brake = maxBrake
 
         return {
             "steer": float(new_steer),
