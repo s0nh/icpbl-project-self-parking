@@ -127,7 +127,7 @@ class PlannerSkeleton:
                 if 0 <= nx < len(self.base_board[0]) and 0 <= ny < len(self.base_board):
                     if self.collision_map[ny][nx] == 0:
                         self.collision_map[ny][nx] = current_dist + 1
-                        if self.collision_map[ny][nx] == 6:
+                        if self.collision_map[ny][nx] == 7:
                             continue
                         q.append((nx, ny))
 
