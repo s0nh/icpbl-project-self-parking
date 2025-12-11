@@ -405,7 +405,7 @@ class PlannerSkeleton:
                 yaw2 = math.atan2(next_next_p[1] - next_p[1], next_next_p[0] - next_p[0])
                 diff = abs(yaw1 - yaw2)
                 diff = (diff + math.pi) % (2*math.pi) - math.pi
-                if abs(diff) > math.pi / 2: # math.radians(150)
+                if abs(diff) > math.pi / 2:
                     switch_idx = i+1
                     dist_to_switch = math.hypot(x - self.waypoints[switch_idx][0], y - self.waypoints[switch_idx][1])
                     break
